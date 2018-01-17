@@ -1,5 +1,5 @@
 use {Poll, Async, Future};
-use sink::Sink;
+use sink::SinkBase;
 
 /// Future for the `Sink::flush` combinator, which polls the sink until all data
 /// has been flushed.
@@ -9,11 +9,11 @@ pub struct Flush<S> {
     sink: Option<S>,
 }
 
-pub fn new<S: Sink>(sink: S) -> Flush<S> {
+pub fn new<S: SinkBase>(sink: S) -> Flush<S> {
     Flush { sink: Some(sink) }
 }
 
-impl<S: Sink> Flush<S> {
+impl<S: SinkBase> Flush<S> {
     /// Get a shared reference to the inner sink.
     pub fn get_ref(&self) -> &S {
         self.sink.as_ref().expect("Attempted `Flush::get_ref` after the flush completed")
@@ -30,7 +30,7 @@ impl<S: Sink> Flush<S> {
     }
 }
 
-impl<S: Sink> Future for Flush<S> {
+impl<S: SinkBase> Future for Flush<S> {
     type Item = S;
     type Error = S::SinkError;
 

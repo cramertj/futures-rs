@@ -31,16 +31,17 @@ if_std! {
     pub use self::wait::Wait;
 
     // TODO: consider expanding this via e.g. FromIterator
-    impl<T> Sink for ::std::vec::Vec<T> {
-        type SinkItem = T;
-        type SinkError = (); // Change this to ! once it stabilizes
-
-        fn start_send(&mut self, item: Self::SinkItem)
-                      -> StartSend<Self::SinkItem, Self::SinkError>
+    impl<T> Sink<T> for ::std::vec::Vec<T> {
+        fn start_send(&mut self, item: T)
+                      -> StartSend<T, Self::SinkError>
         {
             self.push(item);
             Ok(::AsyncSink::Ready)
         }
+    }
+
+    impl<T> SinkBase for ::std::vec::Vec<T> {
+        type SinkError = (); // Change this to ! once it stabilizes
 
         fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
             Ok(::Async::Ready(()))
@@ -52,17 +53,24 @@ if_std! {
     }
 
     /// A type alias for `Box<Sink + Send>`
-    pub type BoxSink<T, E> = ::std::boxed::Box<Sink<SinkItem = T, SinkError = E> +
+    pub type BoxSink<T, E> = ::std::boxed::Box<Sink<T, SinkError = E> +
                                                ::core::marker::Send>;
 
-    impl<S: ?Sized + Sink> Sink for ::std::boxed::Box<S> {
-        type SinkItem = S::SinkItem;
-        type SinkError = S::SinkError;
-
-        fn start_send(&mut self, item: Self::SinkItem)
-                      -> StartSend<Self::SinkItem, Self::SinkError> {
+    impl<S, SinkItem> Sink<SinkItem> for ::std::boxed::Box<S>
+        where
+        S: ?Sized + Sink<SinkItem>,
+    {
+        fn start_send(&mut self, item: SinkItem)
+                      -> StartSend<SinkItem, Self::SinkError> {
             (**self).start_send(item)
         }
+    }
+
+    impl<S> SinkBase for ::std::boxed::Box<S>
+        where
+        S: ?Sized + SinkBase,
+    {
+        type SinkError = S::SinkError;
 
         fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
             (**self).poll_complete()
@@ -83,44 +91,8 @@ pub use self::map_err::SinkMapErr;
 pub use self::from_err::SinkFromErr;
 pub use self::fanout::Fanout;
 
-/// A `Sink` is a value into which other values can be sent, asynchronously.
-///
-/// Basic examples of sinks include the sending side of:
-///
-/// - Channels
-/// - Sockets
-/// - Pipes
-///
-/// In addition to such "primitive" sinks, it's typical to layer additional
-/// functionality, such as buffering, on top of an existing sink.
-///
-/// Sending to a sink is "asynchronous" in the sense that the value may not be
-/// sent in its entirety immediately. Instead, values are sent in a two-phase
-/// way: first by initiating a send, and then by polling for completion. This
-/// two-phase setup is analogous to buffered writing in synchronous code, where
-/// writes often succeed immediately, but internally are buffered and are
-/// *actually* written only upon flushing.
-///
-/// In addition, the `Sink` may be *full*, in which case it is not even possible
-/// to start the sending process.
-///
-/// As with `Future` and `Stream`, the `Sink` trait is built from a few core
-/// required methods, and a host of default methods for working in a
-/// higher-level way. The `Sink::send_all` combinator is of particular
-/// importance: you can use it to send an entire stream to a sink, which is
-/// the simplest way to ultimately consume a sink.
-///
-/// You can find more information/tutorials about streams [online at
-/// https://tokio.rs][online]
-///
-/// [online]: https://tokio.rs/docs/getting-started/streams-and-sinks/
-pub trait Sink {
-    /// The type of value that the sink accepts.
-    type SinkItem;
-
-    /// The type of value produced by the sink when an error occurs.
-    type SinkError;
-
+/// TODO
+pub trait Sink<SinkItem>: SinkBase {
     /// Begin the process of sending a value to the sink.
     ///
     /// As the name suggests, this method only *begins* the process of sending
@@ -159,8 +131,44 @@ pub trait Sink {
     ///
     /// - It is called outside of the context of a task.
     /// - A previous call to `start_send` or `poll_complete` yielded an error.
-    fn start_send(&mut self, item: Self::SinkItem)
-                  -> StartSend<Self::SinkItem, Self::SinkError>;
+    fn start_send(&mut self, item: SinkItem)
+                  -> StartSend<SinkItem, Self::SinkError>;
+}
+
+/// A `Sink` is a value into which other values can be sent, asynchronously.
+///
+/// Basic examples of sinks include the sending side of:
+///
+/// - Channels
+/// - Sockets
+/// - Pipes
+///
+/// In addition to such "primitive" sinks, it's typical to layer additional
+/// functionality, such as buffering, on top of an existing sink.
+///
+/// Sending to a sink is "asynchronous" in the sense that the value may not be
+/// sent in its entirety immediately. Instead, values are sent in a two-phase
+/// way: first by initiating a send, and then by polling for completion. This
+/// two-phase setup is analogous to buffered writing in synchronous code, where
+/// writes often succeed immediately, but internally are buffered and are
+/// *actually* written only upon flushing.
+///
+/// In addition, the `Sink` may be *full*, in which case it is not even possible
+/// to start the sending process.
+///
+/// As with `Future` and `Stream`, the `Sink` trait is built from a few core
+/// required methods, and a host of default methods for working in a
+/// higher-level way. The `Sink::send_all` combinator is of particular
+/// importance: you can use it to send an entire stream to a sink, which is
+/// the simplest way to ultimately consume a sink.
+///
+/// You can find more information/tutorials about streams [online at
+/// https://tokio.rs][online]
+///
+/// [online]: https://tokio.rs/docs/getting-started/streams-and-sinks/
+pub trait SinkBase {
+    /// The type of value produced by the sink when an error occurs.
+    type SinkError;
 
     /// Flush all output from this sink, if necessary.
     ///
@@ -312,9 +320,9 @@ pub trait Sink {
     /// version, much like `Iterator::map`.
     fn with<U, F, Fut>(self, f: F) -> With<Self, U, F, Fut>
         where F: FnMut(U) -> Fut,
-              Fut: IntoFuture<Item = Self::SinkItem>,
+              Fut: IntoFuture,
               Fut::Error: From<Self::SinkError>,
-              Self: Sized
+              Self: Sized + Sink<<Fut as IntoFuture>::Item>,
     {
         with::new(self, f)
     }
@@ -351,25 +359,11 @@ pub trait Sink {
     /// ```
     fn with_flat_map<U, F, St>(self, f: F) -> WithFlatMap<Self, U, F, St>
         where F: FnMut(U) -> St,
-              St: Stream<Item = Self::SinkItem, Error=Self::SinkError>,
-              Self: Sized
+              St: Stream<Error=<Self as SinkBase>::SinkError>,
+              Self: Sized + Sink<St::Item>,
         {
             with_flat_map::new(self, f)
         }
-
-    /*
-    fn with_map<U, F>(self, f: F) -> WithMap<Self, U, F>
-        where F: FnMut(U) -> Self::SinkItem,
-              Self: Sized;
-
-    fn with_filter<F>(self, f: F) -> WithFilter<Self, F>
-        where F: FnMut(Self::SinkItem) -> bool,
-              Self: Sized;
-
-    fn with_filter_map<U, F>(self, f: F) -> WithFilterMap<Self, U, F>
-        where F: FnMut(U) -> Option<Self::SinkItem>,
-              Self: Sized;
-     */
 
     /// Transforms the error returned by the sink.
     fn sink_map_err<F, E>(self, f: F) -> SinkMapErr<Self, F>
@@ -403,8 +397,8 @@ pub trait Sink {
     /// This method is only available when the `use_std` feature of this
     /// library is activated, and it is activated by default.
     #[cfg(feature = "use_std")]
-    fn buffer(self, amt: usize) -> Buffer<Self>
-        where Self: Sized
+    fn buffer<SinkItem>(self, amt: usize) -> Buffer<Self, SinkItem>
+        where Self: Sized + Sink<SinkItem>
     {
         buffer::new(self, amt)
     }
@@ -413,10 +407,10 @@ pub trait Sink {
     ///
     /// This adapter clones each incoming item and forwards it to both this as well as
     /// the other sink at the same time.
-    fn fanout<S>(self, other: S) -> Fanout<Self, S>
-        where Self: Sized,
-              Self::SinkItem: Clone,
-              S: Sink<SinkItem=Self::SinkItem, SinkError=Self::SinkError>
+    fn fanout<S, SinkItem>(self, other: S) -> Fanout<Self, S, SinkItem>
+        where Self: Sized + Sink<SinkItem>,
+              SinkItem: Clone,
+              S: Sink<SinkItem> + SinkBase<SinkError=Self::SinkError>
     {
         fanout::new(self, other)
     }
@@ -441,8 +435,8 @@ pub trait Sink {
     /// between each item.**
     ///
     /// On completion, the sink is returned.
-    fn send(self, item: Self::SinkItem) -> Send<Self>
-        where Self: Sized
+    fn send<SinkItem>(self, item: SinkItem) -> Send<Self, SinkItem>
+        where Self: Sized + Sink<SinkItem>
     {
         send::new(self, item)
     }
@@ -462,22 +456,29 @@ pub trait Sink {
     ///
     /// On completion, the pair `(sink, source)` is returned.
     fn send_all<S>(self, stream: S) -> SendAll<Self, S>
-        where S: Stream<Item = Self::SinkItem>,
+        where S: Stream,
               Self::SinkError: From<S::Error>,
-              Self: Sized
+              Self: Sized + Sink<S::Item>
     {
         send_all::new(self, stream)
     }
 }
 
-impl<'a, S: ?Sized + Sink> Sink for &'a mut S {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: Self::SinkItem)
-                  -> StartSend<Self::SinkItem, Self::SinkError> {
+impl<'a, S, SinkItem> Sink<SinkItem> for &'a mut S
+    where
+    S: ?Sized + Sink<SinkItem>
+{
+    fn start_send(&mut self, item: SinkItem) -> StartSend<SinkItem, Self::SinkError> {
         (**self).start_send(item)
     }
+}
+
+
+impl<'a, S> SinkBase for &'a mut S
+    where
+    S: ?Sized + SinkBase,
+{
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         (**self).poll_complete()

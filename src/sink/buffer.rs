@@ -2,22 +2,26 @@ use std::collections::VecDeque;
 
 use {Poll, Async};
 use {StartSend, AsyncSink};
-use sink::Sink;
+use sink::{Sink, SinkBase};
 use stream::Stream;
 
 /// Sink for the `Sink::buffer` combinator, which buffers up to some fixed
 /// number of values when the underlying sink is unable to accept them.
 #[derive(Debug)]
 #[must_use = "sinks do nothing unless polled"]
-pub struct Buffer<S: Sink> {
+pub struct Buffer<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     sink: S,
-    buf: VecDeque<S::SinkItem>,
+    buf: VecDeque<SinkItem>,
 
     // Track capacity separately from the `VecDeque`, which may be rounded up
     cap: usize,
 }
 
-pub fn new<S: Sink>(sink: S, amt: usize) -> Buffer<S> {
+pub fn new<S, SinkItem>(sink: S, amt: usize) -> Buffer<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     Buffer {
         sink: sink,
         buf: VecDeque::with_capacity(amt),
@@ -25,7 +29,9 @@ pub fn new<S: Sink>(sink: S, amt: usize) -> Buffer<S> {
     }
 }
 
-impl<S: Sink> Buffer<S> {
+impl<S, SinkItem> Buffer<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     /// Get a shared reference to the inner sink.
     pub fn get_ref(&self) -> &S {
         &self.sink
@@ -61,7 +67,9 @@ impl<S: Sink> Buffer<S> {
 }
 
 // Forwarding impl of Stream from the underlying sink
-impl<S> Stream for Buffer<S> where S: Sink + Stream {
+impl<S, SinkItem> Stream for Buffer<S, SinkItem>
+    where S: Sink<SinkItem> + Stream
+{
     type Item = S::Item;
     type Error = S::Error;
 
@@ -70,11 +78,10 @@ impl<S> Stream for Buffer<S> where S: Sink + Stream {
     }
 }
 
-impl<S: Sink> Sink for Buffer<S> {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+impl<S, SinkItem> Sink<SinkItem> for Buffer<S, SinkItem>
+    where S: Sink<SinkItem>
+{
+    fn start_send(&mut self, item: SinkItem) -> StartSend<SinkItem, Self::SinkError> {
         if self.cap == 0 {
             return self.sink.start_send(item);
         }
@@ -86,6 +93,12 @@ impl<S: Sink> Sink for Buffer<S> {
         self.buf.push_back(item);
         Ok(AsyncSink::Ready)
     }
+}
+
+impl<S, SinkItem> SinkBase for Buffer<S, SinkItem>
+    where S: Sink<SinkItem>
+{
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         if self.cap == 0 {

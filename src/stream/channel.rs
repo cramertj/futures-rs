@@ -6,7 +6,7 @@ use std::any::Any;
 use std::error::Error;
 use std::fmt;
 
-use {Poll, Async, Stream, Future, Sink};
+use {Poll, Async, SinkBase, Stream, Future};
 use sink::Send;
 use sync::mpsc;
 
@@ -51,7 +51,7 @@ pub struct SendError<T, E>(Result<T, E>);
 /// Future returned by `Sender::send`.
 #[derive(Debug)]
 pub struct FutureSender<T, E> {
-    inner: Send<mpsc::Sender<Result<T, E>>>,
+    inner: Send<mpsc::Sender<Result<T, E>>, Result<T, E>>,
 }
 
 impl<T, E> fmt::Debug for SendError<T, E> {

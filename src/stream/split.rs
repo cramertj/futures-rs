@@ -2,7 +2,7 @@ use std::any::Any;
 use std::error::Error;
 use std::fmt;
 
-use {StartSend, Sink, Stream, Poll, Async, AsyncSink};
+use {StartSend, Sink, SinkBase, Stream, Poll, Async, AsyncSink};
 use sync::BiLock;
 
 /// A `Stream` part of the split pair
@@ -45,18 +45,23 @@ impl<S> SplitSink<S> {
     }
 }
 
-impl<S: Sink> Sink for SplitSink<S> {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: S::SinkItem)
-        -> StartSend<S::SinkItem, S::SinkError>
+impl<S, SinkItem> Sink<SinkItem> for SplitSink<S>
+    where S: Sink<SinkItem>
+{
+    fn start_send(&mut self, item: SinkItem)
+        -> StartSend<SinkItem, S::SinkError>
     {
         match self.0.poll_lock() {
             Async::Ready(mut inner) => inner.start_send(item),
             Async::NotReady => Ok(AsyncSink::NotReady(item)),
         }
     }
+}
+
+impl<S> SinkBase for SplitSink<S>
+    where S: SinkBase
+{
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), S::SinkError> {
         match self.0.poll_lock() {
@@ -73,7 +78,7 @@ impl<S: Sink> Sink for SplitSink<S> {
     }
 }
 
-pub fn split<S: Stream + Sink>(s: S) -> (SplitSink<S>, SplitStream<S>) {
+pub fn split<S: Stream + SinkBase>(s: S) -> (SplitSink<S>, SplitStream<S>) {
     let (a, b) = BiLock::new(s);
     let read = SplitStream(a);
     let write = SplitSink(b);

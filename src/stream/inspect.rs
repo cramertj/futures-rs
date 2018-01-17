@@ -45,16 +45,19 @@ impl<S: Stream, F> Inspect<S, F> {
     }
 }
 
-// Forwarding impl of Sink from the underlying stream
-impl<S, F> ::sink::Sink for Inspect<S, F>
-    where S: ::sink::Sink + Stream
+impl<S, SinkItem, F> ::sink::Sink<SinkItem> for Inspect<S, F>
+    where S: ::sink::Sink<SinkItem> + Stream
 {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: S::SinkItem) -> ::StartSend<S::SinkItem, S::SinkError> {
+    fn start_send(&mut self, item: SinkItem) -> ::StartSend<SinkItem, S::SinkError> {
         self.stream.start_send(item)
     }
+}
+
+// Forwarding impl of Sink from the underlying stream
+impl<S, F> ::sink::SinkBase for Inspect<S, F>
+    where S: ::sink::SinkBase + Stream
+{
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), S::SinkError> {
         self.stream.poll_complete()

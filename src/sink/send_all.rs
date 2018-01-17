@@ -13,8 +13,8 @@ pub struct SendAll<T, U: Stream> {
 }
 
 pub fn new<T, U>(sink: T, stream: U) -> SendAll<T, U>
-    where T: Sink,
-          U: Stream<Item = T::SinkItem>,
+    where T: Sink<U::Item>,
+          U: Stream,
           T::SinkError: From<U::Error>,
 {
     SendAll {
@@ -25,8 +25,8 @@ pub fn new<T, U>(sink: T, stream: U) -> SendAll<T, U>
 }
 
 impl<T, U> SendAll<T, U>
-    where T: Sink,
-          U: Stream<Item = T::SinkItem>,
+    where T: Sink<U::Item>,
+          U: Stream,
           T::SinkError: From<U::Error>,
 {
     fn sink_mut(&mut self) -> &mut T {
@@ -57,8 +57,8 @@ impl<T, U> SendAll<T, U>
 }
 
 impl<T, U> Future for SendAll<T, U>
-    where T: Sink,
-          U: Stream<Item = T::SinkItem>,
+    where T: Sink<U::Item>,
+          U: Stream,
           T::SinkError: From<U::Error>,
 {
     type Item = (T, U);

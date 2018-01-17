@@ -52,16 +52,19 @@ impl<S, P, R> TakeWhile<S, P, R> where S: Stream, R: IntoFuture {
     }
 }
 
-// Forwarding impl of Sink from the underlying stream
-impl<S, P, R> ::sink::Sink for TakeWhile<S, P, R>
-    where S: ::sink::Sink + Stream, R: IntoFuture
+impl<S, SinkItem, P, R> ::sink::Sink<SinkItem> for TakeWhile<S, P, R>
+    where S: ::sink::Sink<SinkItem> + Stream, R: IntoFuture
 {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: S::SinkItem) -> ::StartSend<S::SinkItem, S::SinkError> {
+    fn start_send(&mut self, item: SinkItem) -> ::StartSend<SinkItem, S::SinkError> {
         self.stream.start_send(item)
     }
+}
+
+// Forwarding impl of Sink from the underlying stream
+impl<S, P, R> ::sink::SinkBase for TakeWhile<S, P, R>
+    where S: ::sink::SinkBase + Stream, R: IntoFuture
+{
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), S::SinkError> {
         self.stream.poll_complete()

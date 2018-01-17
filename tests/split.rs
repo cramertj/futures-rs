@@ -14,15 +14,18 @@ impl<T: Stream, U> Stream for Join<T, U> {
     }
 }
 
-impl<T, U: Sink> Sink for Join<T, U> {
-    type SinkItem = U::SinkItem;
-    type SinkError = U::SinkError;
-
-    fn start_send(&mut self, item: U::SinkItem)
-        -> StartSend<U::SinkItem, U::SinkError>
+impl<T, U, SinkItem> Sink<SinkItem> for Join<T, U>
+    where U: Sink<SinkItem>
+{
+    fn start_send(&mut self, item: SinkItem)
+        -> StartSend<SinkItem, U::SinkError>
     {
         self.1.start_send(item)
     }
+}
+
+impl<T, U: SinkBase> SinkBase for Join<T, U> {
+    type SinkError = U::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), U::SinkError> {
         self.1.poll_complete()

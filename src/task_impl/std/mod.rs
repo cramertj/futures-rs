@@ -8,7 +8,7 @@ use std::ptr;
 use std::sync::{Arc, Mutex, Condvar, Once, ONCE_INIT};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use {Future, Stream, Sink, Poll, Async, StartSend, AsyncSink};
+use {Future, Stream, Sink, SinkBase, Poll, Async, StartSend, AsyncSink};
 use super::core;
 use super::{BorrowedTask, NotifyHandle, Spawn, spawn, Notify, UnsafeNotify};
 
@@ -310,7 +310,8 @@ impl<S: Stream> Spawn<S> {
     }
 }
 
-impl<S: Sink> Spawn<S> {
+impl<S> Spawn<S> where S: SinkBase
+{
     /// Invokes the underlying `start_send` method with this task in place.
     ///
     /// If the underlying operation returns `NotReady` then the `unpark` value
@@ -318,8 +319,10 @@ impl<S: Sink> Spawn<S> {
     /// attempted again.
     #[deprecated(note = "recommended to use `start_send_notify` instead")]
     #[allow(deprecated)]
-    pub fn start_send(&mut self, value: S::SinkItem, unpark: &Arc<Unpark>)
-                       -> StartSend<S::SinkItem, S::SinkError> {
+    pub fn start_send<SinkItem>(&mut self, value: SinkItem, unpark: &Arc<Unpark>)
+                       -> StartSend<SinkItem, S::SinkError>
+        where S: Sink<SinkItem>
+    {
         self.enter(BorrowedUnpark::Old(unpark), |s| s.start_send(value))
     }
 
@@ -340,8 +343,10 @@ impl<S: Sink> Spawn<S> {
     /// This function will send the `value` on the sink that this task wraps. If
     /// the sink is not ready to send the value yet then the current thread will
     /// be blocked until it's able to send the value.
-    pub fn wait_send(&mut self, mut value: S::SinkItem)
-                     -> Result<(), S::SinkError> {
+    pub fn wait_send<SinkItem>(&mut self, mut value: SinkItem)
+                     -> Result<(), S::SinkError>
+        where S: Sink<SinkItem>
+    {
         ThreadNotify::with_current(|notify| {
 
             loop {

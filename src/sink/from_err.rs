@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use {Sink, Poll, StartSend};
+use {Sink, SinkBase, Poll, StartSend};
 
 /// A sink combinator to change the error type of a sink.
 ///
@@ -13,7 +13,6 @@ pub struct SinkFromErr<S, E> {
 }
 
 pub fn new<S, E>(sink: S) -> SinkFromErr<S, E>
-    where S: Sink
 {
     SinkFromErr {
         sink: sink,
@@ -41,16 +40,20 @@ impl<S, E> SinkFromErr<S, E> {
     }
 }
 
-impl<S, E> Sink for SinkFromErr<S, E>
-    where S: Sink,
+impl<S, SinkItem, E> Sink<SinkItem> for SinkFromErr<S, E>
+    where S: Sink<SinkItem>,
           E: From<S::SinkError>
 {
-    type SinkItem = S::SinkItem;
-    type SinkError = E;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(&mut self, item: SinkItem) -> StartSend<SinkItem, Self::SinkError> {
         self.sink.start_send(item).map_err(|e| e.into())
     }
+}
+
+impl<S, E> SinkBase for SinkFromErr<S, E>
+    where S: SinkBase,
+          E: From<S::SinkError>
+{
+    type SinkError = E;
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         self.sink.poll_complete().map_err(|e| e.into())

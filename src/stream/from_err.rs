@@ -61,14 +61,17 @@ impl<S: Stream, E: From<S::Error>> Stream for FromErr<S, E> {
     }
 }
 
-// Forwarding impl of Sink from the underlying stream
-impl<S: Stream + ::sink::Sink, E> ::sink::Sink for FromErr<S, E> {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> ::StartSend<Self::SinkItem, Self::SinkError> {
+impl<S, SinkItem, E> ::sink::Sink<SinkItem> for FromErr<S, E>
+    where S: Stream + ::sink::Sink<SinkItem>
+{
+    fn start_send(&mut self, item: SinkItem) -> ::StartSend<SinkItem, Self::SinkError> {
         self.stream.start_send(item)
     }
+}
+
+// Forwarding impl of Sink from the underlying stream
+impl<S: Stream + ::sink::SinkBase, E> ::sink::SinkBase for FromErr<S, E> {
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         self.stream.poll_complete()

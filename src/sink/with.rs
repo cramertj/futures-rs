@@ -2,32 +2,32 @@ use core::mem;
 use core::marker::PhantomData;
 
 use {IntoFuture, Future, Poll, Async, StartSend, AsyncSink};
-use sink::Sink;
+use sink::{Sink, SinkBase};
 use stream::Stream;
+
 
 /// Sink for the `Sink::with` combinator, chaining a computation to run *prior*
 /// to pushing a value into the underlying sink.
-#[derive(Debug)]
+#[allow(missing_debug_implementations)]
 #[must_use = "sinks do nothing unless polled"]
 pub struct With<S, U, F, Fut>
-    where S: Sink,
-          F: FnMut(U) -> Fut,
-          Fut: IntoFuture,
+    where Fut: IntoFuture,
 {
     sink: S,
     f: F,
-    state: State<Fut::Future, S::SinkItem>,
+    state: State<Fut::Future>,
     _phantom: PhantomData<fn(U)>,
 }
 
-#[derive(Debug)]
-enum State<Fut, T> {
+enum State<Fut>
+    where Fut: IntoFuture
+{
     Empty,
     Process(Fut),
-    Buffered(T),
+    Buffered(<Fut as IntoFuture>::Item),
 }
 
-impl<Fut, T> State<Fut, T> {
+impl<Fut: Future> State<Fut> {
     fn is_empty(&self) -> bool {
         if let State::Empty = *self {
             true
@@ -38,9 +38,9 @@ impl<Fut, T> State<Fut, T> {
 }
 
 pub fn new<S, U, F, Fut>(sink: S, f: F) -> With<S, U, F, Fut>
-    where S: Sink,
+    where S: Sink<<Fut as IntoFuture>::Item>,
           F: FnMut(U) -> Fut,
-          Fut: IntoFuture<Item = S::SinkItem>,
+          Fut: IntoFuture,
           Fut::Error: From<S::SinkError>,
 {
     With {
@@ -53,7 +53,7 @@ pub fn new<S, U, F, Fut>(sink: S, f: F) -> With<S, U, F, Fut>
 
 // Forwarding impl of Stream from the underlying sink
 impl<S, U, F, Fut> Stream for With<S, U, F, Fut>
-    where S: Stream + Sink,
+    where S: Stream + Sink<<Fut as IntoFuture>::Item>,
           F: FnMut(U) -> Fut,
           Fut: IntoFuture
 {
@@ -66,9 +66,9 @@ impl<S, U, F, Fut> Stream for With<S, U, F, Fut>
 }
 
 impl<S, U, F, Fut> With<S, U, F, Fut>
-    where S: Sink,
+    where S: Sink<<Fut as IntoFuture>::Item>,
           F: FnMut(U) -> Fut,
-          Fut: IntoFuture<Item = S::SinkItem>,
+          Fut: IntoFuture,
           Fut::Error: From<S::SinkError>,
 {
     /// Get a shared reference to the inner sink.
@@ -121,22 +121,28 @@ impl<S, U, F, Fut> With<S, U, F, Fut>
     }
 }
 
-impl<S, U, F, Fut> Sink for With<S, U, F, Fut>
-    where S: Sink,
+impl<S, U, F, Fut> Sink<<Fut as IntoFuture>::Item> for With<S, U, F, Fut>
+    where S: Sink<U>,
           F: FnMut(U) -> Fut,
-          Fut: IntoFuture<Item = S::SinkItem>,
+          Fut: IntoFuture<Item = U>,
           Fut::Error: From<S::SinkError>,
 {
-    type SinkItem = U;
-    type SinkError = Fut::Error;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Fut::Error> {
+    fn start_send(&mut self, item: U) -> StartSend<U, Fut::Error> {
         if self.poll()?.is_not_ready() {
             return Ok(AsyncSink::NotReady(item))
         }
         self.state = State::Process((self.f)(item).into_future());
         Ok(AsyncSink::Ready)
     }
+}
+
+impl<S, U, F, Fut> SinkBase for With<S, U, F, Fut>
+    where S: Sink<<Fut as IntoFuture>::Item>,
+          F: FnMut(U) -> Fut,
+          Fut: IntoFuture,
+          Fut::Error: From<S::SinkError>,
+{
+    type SinkError = Fut::Error;
 
     fn poll_complete(&mut self) -> Poll<(), Fut::Error> {
         // poll ourselves first, to push data downward

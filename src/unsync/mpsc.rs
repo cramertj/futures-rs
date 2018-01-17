@@ -17,7 +17,7 @@ use future::Executor;
 use sink::SendAll;
 use resultstream::{self, Results};
 use unsync::oneshot;
-use {Async, AsyncSink, Future, Poll, StartSend, Sink, Stream};
+use {Async, AsyncSink, Future, Poll, StartSend, Sink, SinkBase, Stream};
 
 /// Creates a bounded in-memory channel with buffered storage.
 ///
@@ -95,13 +95,14 @@ impl<T> Clone for Sender<T> {
     }
 }
 
-impl<T> Sink for Sender<T> {
-    type SinkItem = T;
-    type SinkError = SendError<T>;
-
+impl<T> Sink<T> for Sender<T> {
     fn start_send(&mut self, msg: T) -> StartSend<T, SendError<T>> {
         self.do_send(msg)
     }
+}
+
+impl<T> SinkBase for Sender<T> {
+    type SinkError = SendError<T>;
 
     fn poll_complete(&mut self) -> Poll<(), SendError<T>> {
         Ok(Async::Ready(()))
@@ -218,13 +219,16 @@ impl<T> Clone for UnboundedSender<T> {
     }
 }
 
-impl<T> Sink for UnboundedSender<T> {
-    type SinkItem = T;
-    type SinkError = SendError<T>;
 
+impl<T> Sink<T> for UnboundedSender<T> {
     fn start_send(&mut self, msg: T) -> StartSend<T, SendError<T>> {
         self.0.start_send(msg)
     }
+}
+
+impl<T> SinkBase for UnboundedSender<T> {
+    type SinkError = SendError<T>;
+
     fn poll_complete(&mut self) -> Poll<(), SendError<T>> {
         Ok(Async::Ready(()))
     }
@@ -233,13 +237,14 @@ impl<T> Sink for UnboundedSender<T> {
     }
 }
 
-impl<'a, T> Sink for &'a UnboundedSender<T> {
-    type SinkItem = T;
-    type SinkError = SendError<T>;
-
+impl<'a, T> Sink<T> for &'a UnboundedSender<T> {
     fn start_send(&mut self, msg: T) -> StartSend<T, SendError<T>> {
         self.0.do_send(msg)
     }
+}
+
+impl<'a, T> SinkBase for &'a UnboundedSender<T> {
+    type SinkError = SendError<T>;
 
     fn poll_complete(&mut self) -> Poll<(), SendError<T>> {
         Ok(Async::Ready(()))

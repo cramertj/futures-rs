@@ -82,7 +82,7 @@ use task::{self, Task};
 use future::Executor;
 use sink::SendAll;
 use resultstream::{self, Results};
-use {Async, AsyncSink, Future, Poll, StartSend, Sink, Stream};
+use {Async, AsyncSink, Future, Poll, StartSend, Sink, SinkBase, Stream};
 
 mod queue;
 
@@ -631,10 +631,7 @@ impl<T> Sender<T> {
     }
 }
 
-impl<T> Sink for Sender<T> {
-    type SinkItem = T;
-    type SinkError = SendError<T>;
-
+impl<T> Sink<T> for Sender<T> {
     fn start_send(&mut self, msg: T) -> StartSend<T, SendError<T>> {
         // If the sender is currently blocked, reject the message before doing
         // any work.
@@ -647,6 +644,10 @@ impl<T> Sink for Sender<T> {
 
         Ok(AsyncSink::Ready)
     }
+}
+
+impl<T> SinkBase for Sender<T> {
+    type SinkError = SendError<T>;
 
     fn poll_complete(&mut self) -> Poll<(), SendError<T>> {
         Ok(Async::Ready(()))
@@ -679,13 +680,14 @@ impl<T> UnboundedSender<T> {
     }
 }
 
-impl<T> Sink for UnboundedSender<T> {
-    type SinkItem = T;
-    type SinkError = SendError<T>;
-
+impl<T> Sink<T> for UnboundedSender<T> {
     fn start_send(&mut self, msg: T) -> StartSend<T, SendError<T>> {
         self.0.start_send(msg)
     }
+}
+
+impl<T> SinkBase for UnboundedSender<T> {
+    type SinkError = SendError<T>;
 
     fn poll_complete(&mut self) -> Poll<(), SendError<T>> {
         self.0.poll_complete()
@@ -696,14 +698,15 @@ impl<T> Sink for UnboundedSender<T> {
     }
 }
 
-impl<'a, T> Sink for &'a UnboundedSender<T> {
-    type SinkItem = T;
-    type SinkError = SendError<T>;
-
+impl<'a, T> Sink<T> for &'a UnboundedSender<T> {
     fn start_send(&mut self, msg: T) -> StartSend<T, SendError<T>> {
         self.0.do_send_nb(msg)?;
         Ok(AsyncSink::Ready)
     }
+}
+
+impl<'a, T> SinkBase for &'a UnboundedSender<T> {
+    type SinkError = SendError<T>;
 
     fn poll_complete(&mut self) -> Poll<(), SendError<T>> {
         Ok(Async::Ready(()))

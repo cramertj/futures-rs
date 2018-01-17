@@ -1,18 +1,26 @@
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::mem::replace;
 
-use {Async, AsyncSink, Poll, Sink, StartSend};
+use {Async, AsyncSink, Poll, Sink, SinkBase, StartSend};
 
 /// Sink that clones incoming items and forwards them to two sinks at the same time.
 ///
 /// Backpressure from any downstream sink propagates up, which means that this sink
 /// can only process items as fast as its _slowest_ downstream sink.
-pub struct Fanout<A: Sink, B: Sink> {
-    left: Downstream<A>,
-    right: Downstream<B>
+pub struct Fanout<A, B, SinkItem>
+    where A: Sink<SinkItem>,
+          B: Sink<SinkItem, SinkError=A::SinkError>,
+          SinkItem: Clone,
+{
+    left: Downstream<A, SinkItem>,
+    right: Downstream<B, SinkItem>
 }
 
-impl<A: Sink, B: Sink> Fanout<A, B> {
+impl<A, B, SinkItem> Fanout<A, B, SinkItem>
+    where A: Sink<SinkItem>,
+          B: Sink<SinkItem, SinkError=A::SinkError>,
+          SinkItem: Clone,
+{
     /// Consumes this combinator, returning the underlying sinks.
     ///
     /// Note that this may discard intermediate state of this combinator,
@@ -22,9 +30,10 @@ impl<A: Sink, B: Sink> Fanout<A, B> {
     }
 }
 
-impl<A: Sink + Debug, B: Sink + Debug> Debug for Fanout<A, B>
-    where A::SinkItem: Debug,
-          B::SinkItem: Debug
+impl<A, B, SinkItem> Debug for Fanout<A, B, SinkItem>
+    where A: Sink<SinkItem> + Debug,
+          B: Sink<SinkItem, SinkError=A::SinkError> + Debug,
+          SinkItem: Clone + Debug,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         f.debug_struct("Fanout")
@@ -34,25 +43,26 @@ impl<A: Sink + Debug, B: Sink + Debug> Debug for Fanout<A, B>
     }
 }
 
-pub fn new<A: Sink, B: Sink>(left: A, right: B) -> Fanout<A, B> {
+pub fn new<A, B, SinkItem>(left: A, right: B) -> Fanout<A, B, SinkItem>
+    where A: Sink<SinkItem>,
+          B: Sink<SinkItem, SinkError=A::SinkError>,
+          SinkItem: Clone,
+{
     Fanout {
         left: Downstream::new(left),
         right: Downstream::new(right)
     }
 }
 
-impl<A, B> Sink for Fanout<A, B>
-    where A: Sink,
-          A::SinkItem: Clone,
-          B: Sink<SinkItem=A::SinkItem, SinkError=A::SinkError>
+impl<A, B, SinkItem> Sink<SinkItem> for Fanout<A, B, SinkItem>
+    where A: Sink<SinkItem>,
+          B: Sink<SinkItem, SinkError=A::SinkError>,
+          SinkItem: Clone,
 {
-    type SinkItem = A::SinkItem;
-    type SinkError = A::SinkError;
-
     fn start_send(
         &mut self, 
-        item: Self::SinkItem
-    ) -> StartSend<Self::SinkItem, Self::SinkError> {
+        item: SinkItem
+    ) -> StartSend<SinkItem, Self::SinkError> {
         // Attempt to complete processing any outstanding requests.
         self.left.keep_flushing()?;
         self.right.keep_flushing()?;
@@ -65,6 +75,14 @@ impl<A, B> Sink for Fanout<A, B>
             Ok(AsyncSink::NotReady(item))
         }
     }
+}
+
+impl<A, B, SinkItem> SinkBase for Fanout<A, B, SinkItem>
+    where A: Sink<SinkItem>,
+          B: Sink<SinkItem, SinkError=A::SinkError>,
+          SinkItem: Clone,
+{
+    type SinkError = A::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         let left_async = self.left.poll_complete()?;
@@ -90,12 +108,16 @@ impl<A, B> Sink for Fanout<A, B>
 }
 
 #[derive(Debug)]
-struct Downstream<S: Sink> {
+struct Downstream<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     sink: S,
-    state: AsyncSink<S::SinkItem>
+    state: AsyncSink<SinkItem>
 }
 
-impl<S: Sink> Downstream<S> {
+impl<S, SinkItem> Downstream<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     fn new(sink: S) -> Self {
         Downstream { sink: sink, state: AsyncSink::Ready }
     }

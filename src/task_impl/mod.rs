@@ -1,7 +1,7 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use {Poll, Future, Stream, Sink, StartSend};
+use {Poll, Future, Stream, Sink, SinkBase, StartSend};
 
 mod atomic_task;
 pub use self::atomic_task::AtomicTask;
@@ -306,13 +306,12 @@ impl<T: ?Sized> Spawn<T> {
     /// If the underlying operation returns `NotReady` then the `notify` value
     /// passed in will receive a notification when the operation is ready to be
     /// attempted again.
-    pub fn start_send_notify<N>(&mut self,
-                                value: T::SinkItem,
-                                notify: &N,
-                                id: usize)
-                               -> StartSend<T::SinkItem, T::SinkError>
-        where N: Clone + Into<NotifyHandle>,
-              T: Sink,
+    pub fn start_send_notify<N, SinkItem>(
+        &mut self, value: SinkItem, notify: &N, id: usize)
+        -> StartSend<SinkItem, T::SinkError>
+        where
+        N: Clone + Into<NotifyHandle>,
+        T: Sink<SinkItem>,
     {
         let mk = || notify.clone().into();
         self.enter(BorrowedUnpark::new(&mk, id), |s| s.start_send(value))
@@ -323,12 +322,10 @@ impl<T: ?Sized> Spawn<T> {
     /// If the underlying operation returns `NotReady` then the `notify` value
     /// passed in will receive a notification when the operation is ready to be
     /// attempted again.
-    pub fn poll_flush_notify<N>(&mut self,
-                                notify: &N,
-                                id: usize)
-                                -> Poll<(), T::SinkError>
-        where N: Clone + Into<NotifyHandle>,
-              T: Sink,
+    pub fn poll_flush_notify<N>(&mut self, notify: &N, id: usize) -> Poll<(), T::SinkError>
+        where
+        N: Clone + Into<NotifyHandle>,
+        T: SinkBase,
     {
         let mk = || notify.clone().into();
         self.enter(BorrowedUnpark::new(&mk, id), |s| s.poll_complete())
@@ -339,12 +336,10 @@ impl<T: ?Sized> Spawn<T> {
     /// If the underlying operation returns `NotReady` then the `notify` value
     /// passed in will receive a notification when the operation is ready to be
     /// attempted again.
-    pub fn close_notify<N>(&mut self,
-                           notify: &N,
-                           id: usize)
-                           -> Poll<(), T::SinkError>
-        where N: Clone + Into<NotifyHandle>,
-              T: Sink,
+    pub fn close_notify<N>(&mut self, notify: &N, id: usize) -> Poll<(), T::SinkError>
+        where
+        N: Clone + Into<NotifyHandle>,
+        T: SinkBase,
     {
         let mk = || notify.clone().into();
         self.enter(BorrowedUnpark::new(&mk, id), |s| s.close())

@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use {Poll, Async, StartSend, AsyncSink};
-use sink::Sink;
+use sink::{Sink, SinkBase};
 use stream::Stream;
 
 /// Sink for the `Sink::with_flat_map` combinator, chaining a computation that returns an iterator
@@ -10,22 +10,22 @@ use stream::Stream;
 #[must_use = "sinks do nothing unless polled"]
 pub struct WithFlatMap<S, U, F, St>
 where
-    S: Sink,
     F: FnMut(U) -> St,
-    St: Stream<Item = S::SinkItem, Error=S::SinkError>,
+    St: Stream<Error=<S as SinkBase>::SinkError>,
+    S: Sink<St::Item>,
 {
     sink: S,
     f: F,
     stream: Option<St>,
-    buffer: Option<S::SinkItem>,
+    buffer: Option<St::Item>,
     _phantom: PhantomData<fn(U)>,
 }
 
 pub fn new<S, U, F, St>(sink: S, f: F) -> WithFlatMap<S, U, F, St>
 where
-    S: Sink,
+    S: Sink<<St as Stream>::Item>,
     F: FnMut(U) -> St,
-    St: Stream<Item = S::SinkItem, Error=S::SinkError>,
+    St: Stream<Error=S::SinkError>,
 {
     WithFlatMap {
         sink: sink,
@@ -38,9 +38,9 @@ where
 
 impl<S, U, F, St> WithFlatMap<S, U, F, St>
 where
-    S: Sink,
+    S: Sink<<St as Stream>::Item>,
     F: FnMut(U) -> St,
-    St: Stream<Item = S::SinkItem, Error=S::SinkError>,
+    St: Stream<Error=S::SinkError>,
 {
     /// Get a shared reference to the inner sink.
     pub fn get_ref(&self) -> &S {
@@ -82,9 +82,9 @@ where
 
 impl<S, U, F, St> Stream for WithFlatMap<S, U, F, St>
 where
-    S: Stream + Sink,
+    S: Stream + Sink<<St as Stream>::Item>,
     F: FnMut(U) -> St,
-    St: Stream<Item = S::SinkItem, Error=S::SinkError>,
+    St: Stream<Error=S::SinkError>,
 {
     type Item = S::Item;
     type Error = S::Error;
@@ -93,15 +93,13 @@ where
     }
 }
 
-impl<S, U, F, St> Sink for WithFlatMap<S, U, F, St>
+impl<S, U, F, St> Sink<U> for WithFlatMap<S, U, F, St>
 where
-    S: Sink,
+    S: Sink<<St as Stream>::Item>,
     F: FnMut(U) -> St,
-    St: Stream<Item = S::SinkItem, Error=S::SinkError>,
+    St: Stream<Error=S::SinkError>,
 {
-    type SinkItem = U;
-    type SinkError = S::SinkError;
-    fn start_send(&mut self, i: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(&mut self, i: U) -> StartSend<U, Self::SinkError> {
         if self.try_empty_stream()?.is_not_ready() {
             return Ok(AsyncSink::NotReady(i));
         }
@@ -110,6 +108,15 @@ where
         self.try_empty_stream()?;
         Ok(AsyncSink::Ready)
     }
+}
+
+impl<S, U, F, St> SinkBase for WithFlatMap<S, U, F, St>
+where
+    S: Sink<<St as Stream>::Item>,
+    F: FnMut(U) -> St,
+    St: Stream<Error=S::SinkError>,
+{
+    type SinkError = S::SinkError; 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         if self.try_empty_stream()?.is_not_ready() {
             return Ok(Async::NotReady);

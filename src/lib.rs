@@ -181,7 +181,7 @@ pub mod stream;
 pub use stream::Stream;
 
 pub mod sink;
-pub use sink::Sink;
+pub use sink::{Sink, SinkBase};
 
 #[deprecated(since = "0.1.4", note = "import through the future module instead")]
 #[cfg(feature = "with-deprecated")]
@@ -259,7 +259,7 @@ if_std! {
 /// working with the `futures` crate!
 pub mod prelude {
     #[doc(no_inline)]
-    pub use {Future, Stream, Sink, Async, AsyncSink, Poll, StartSend};
+    pub use {Future, Stream, Sink, SinkBase, Async, AsyncSink, Poll, StartSend};
     #[doc(no_inline)]
     pub use IntoFuture;
 }

@@ -5,19 +5,21 @@ use sink::Sink;
 /// then waits until the sink has fully flushed.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless polled"]
-pub struct Send<S: Sink> {
+pub struct Send<S, SinkItem> {
     sink: Option<S>,
-    item: Option<S::SinkItem>,
+    item: Option<SinkItem>,
 }
 
-pub fn new<S: Sink>(sink: S, item: S::SinkItem) -> Send<S> {
+pub fn new<S, SinkItem>(sink: S, item: SinkItem) -> Send<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     Send {
         sink: Some(sink),
         item: Some(item),
     }
 }
 
-impl<S: Sink> Send<S> {
+impl<S, SinkItem> Send<S, SinkItem> {
     /// Get a shared reference to the inner sink.
     pub fn get_ref(&self) -> &S {
         self.sink.as_ref().take().expect("Attempted Send::get_ref after completion")
@@ -37,7 +39,9 @@ impl<S: Sink> Send<S> {
     }
 }
 
-impl<S: Sink> Future for Send<S> {
+impl<S, SinkItem> Future for Send<S, SinkItem>
+    where S: Sink<SinkItem>
+{
     type Item = S;
     type Error = S::SinkError;
 

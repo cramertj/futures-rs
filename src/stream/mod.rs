@@ -1063,7 +1063,7 @@ pub trait Stream {
     ///
     /// On completion, the pair `(stream, sink)` is returned.
     fn forward<S>(self, sink: S) -> Forward<Self, S>
-        where S: Sink<SinkItem = Self::Item>,
+        where S: Sink<Self::Item>,
               Self::Error: From<S::SinkError>,
               Self: Sized
     {
@@ -1081,7 +1081,7 @@ pub trait Stream {
     /// library is activated, and it is activated by default.
     #[cfg(feature = "use_std")]
     fn split(self) -> (SplitSink<Self>, SplitStream<Self>)
-        where Self: super::sink::Sink + Sized
+        where Self: super::sink::SinkBase + Sized
     {
         split::split(self)
     }

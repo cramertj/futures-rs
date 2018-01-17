@@ -79,15 +79,15 @@ impl Notify for Flag {
 }
 
 // Sends a value on an i32 channel sink
-struct StartSendFut<S: Sink>(Option<S>, Option<S::SinkItem>);
+struct StartSendFut<S: Sink<T>, T>(Option<S>, Option<T>);
 
-impl<S: Sink> StartSendFut<S> {
-    fn new(sink: S, item: S::SinkItem) -> StartSendFut<S> {
+impl<S: Sink<T>, T> StartSendFut<S, T> {
+    fn new(sink: S, item: T) -> StartSendFut<S, T> {
         StartSendFut(Some(sink), Some(item))
     }
 }
 
-impl<S: Sink> Future for StartSendFut<S> {
+impl<S: Sink<T>, T> Future for StartSendFut<S, T> {
     type Item = S;
     type Error = S::SinkError;
 
@@ -187,10 +187,7 @@ struct ManualFlush<T> {
     waiting_tasks: Vec<Task>,
 }
 
-impl<T> Sink for ManualFlush<T> {
-    type SinkItem = Option<T>; // Pass None to flush
-    type SinkError = ();
-
+impl<T> Sink<Option<T>> for ManualFlush<T> {
     fn start_send(&mut self, op: Option<T>) -> StartSend<Option<T>, ()> {
         if let Some(item) = op {
             self.data.push(item);
@@ -199,6 +196,10 @@ impl<T> Sink for ManualFlush<T> {
         }
         Ok(AsyncSink::Ready)
     }
+}
+
+impl<T> SinkBase for ManualFlush<T> {
+    type SinkError = ();
 
     fn poll_complete(&mut self) -> Poll<(), ()> {
         if self.data.is_empty() {
@@ -297,10 +298,7 @@ impl Allow {
     }
 }
 
-impl<T> Sink for ManualAllow<T> {
-    type SinkItem = T;
-    type SinkError = ();
-
+impl<T> Sink<T> for ManualAllow<T> {
     fn start_send(&mut self, item: T) -> StartSend<T, ()> {
         if self.allow.check() {
             self.data.push(item);
@@ -309,6 +307,10 @@ impl<T> Sink for ManualAllow<T> {
             Ok(AsyncSink::NotReady(item))
         }
     }
+}
+
+impl<T> SinkBase for ManualAllow<T> {
+    type SinkError = ();
 
     fn poll_complete(&mut self) -> Poll<(), ()> {
         Ok(Async::Ready(()))

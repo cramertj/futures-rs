@@ -1,4 +1,4 @@
-use sink::Sink;
+use sink::{Sink, SinkBase};
 use executor;
 
 /// A sink combinator which converts an asynchronous sink to a **blocking
@@ -13,13 +13,13 @@ pub struct Wait<S> {
     sink: executor::Spawn<S>,
 }
 
-pub fn new<S: Sink>(s: S) -> Wait<S> {
+pub fn new<S: SinkBase>(s: S) -> Wait<S> {
     Wait {
         sink: executor::spawn(s),
     }
 }
 
-impl<S: Sink> Wait<S> {
+impl<S: SinkBase> Wait<S> {
     /// Sends a value to this sink, blocking the current thread until it's able
     /// to do so.
     ///
@@ -33,7 +33,9 @@ impl<S: Sink> Wait<S> {
     /// If `Ok(())` is returned then the `value` provided was successfully sent
     /// along the sink, and if `Err(e)` is returned then an error occurred
     /// which prevented the value from being sent.
-    pub fn send(&mut self, value: S::SinkItem) -> Result<(), S::SinkError> {
+    pub fn send<SinkItem>(&mut self, value: SinkItem) -> Result<(), S::SinkError>
+        where S: Sink<SinkItem>
+    {
         self.sink.wait_send(value)
     }
 

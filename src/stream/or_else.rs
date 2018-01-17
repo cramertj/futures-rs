@@ -27,16 +27,19 @@ pub fn new<S, F, U>(s: S, f: F) -> OrElse<S, F, U>
     }
 }
 
-// Forwarding impl of Sink from the underlying stream
-impl<S, F, U> ::sink::Sink for OrElse<S, F, U>
-    where S: ::sink::Sink, U: IntoFuture
+impl<S, SinkItem, F, U> ::sink::Sink<SinkItem> for OrElse<S, F, U>
+    where S: ::sink::Sink<SinkItem>, U: IntoFuture
 {
-    type SinkItem = S::SinkItem;
-    type SinkError = S::SinkError;
-
-    fn start_send(&mut self, item: S::SinkItem) -> ::StartSend<S::SinkItem, S::SinkError> {
+    fn start_send(&mut self, item: SinkItem) -> ::StartSend<SinkItem, S::SinkError> {
         self.stream.start_send(item)
     }
+}
+
+// Forwarding impl of Sink from the underlying stream
+impl<S, F, U> ::sink::SinkBase for OrElse<S, F, U>
+    where S: ::sink::SinkBase, U: IntoFuture
+{
+    type SinkError = S::SinkError;
 
     fn poll_complete(&mut self) -> Poll<(), S::SinkError> {
         self.stream.poll_complete()

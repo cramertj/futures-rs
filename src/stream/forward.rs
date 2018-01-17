@@ -14,7 +14,7 @@ pub struct Forward<T: Stream, U> {
 
 
 pub fn new<T, U>(stream: T, sink: U) -> Forward<T, U>
-    where U: Sink<SinkItem=T::Item>,
+    where U: Sink<T::Item>,
           T: Stream,
           T::Error: From<U::SinkError>,
 {
@@ -26,7 +26,7 @@ pub fn new<T, U>(stream: T, sink: U) -> Forward<T, U>
 }
 
 impl<T, U> Forward<T, U>
-    where U: Sink<SinkItem=T::Item>,
+    where U: Sink<T::Item>,
           T: Stream,
           T::Error: From<U::SinkError>,
 {
@@ -76,7 +76,7 @@ impl<T, U> Forward<T, U>
 }
 
 impl<T, U> Future for Forward<T, U>
-    where U: Sink<SinkItem=T::Item>,
+    where U: Sink<T::Item>,
           T: Stream,
           T::Error: From<U::SinkError>,
 {

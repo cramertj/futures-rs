@@ -1,4 +1,4 @@
-use sink::Sink;
+use sink::{Sink, SinkBase};
 
 use {Poll, StartSend, Stream};
 
@@ -34,16 +34,20 @@ impl<S, E> SinkMapErr<S, E> {
     }
 }
 
-impl<S, F, E> Sink for SinkMapErr<S, F>
-    where S: Sink,
+impl<S, SinkItem, F, E> Sink<SinkItem> for SinkMapErr<S, F>
+    where S: Sink<SinkItem>,
           F: FnOnce(S::SinkError) -> E,
 {
-    type SinkItem = S::SinkItem;
-    type SinkError = E;
-
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(&mut self, item: SinkItem) -> StartSend<SinkItem, Self::SinkError> {
         self.sink.start_send(item).map_err(|e| self.f.take().expect("cannot use MapErr after an error")(e))
     }
+}
+
+impl<S, F, E> SinkBase for SinkMapErr<S, F>
+    where S: SinkBase,
+          F: FnOnce(S::SinkError) -> E,
+{
+    type SinkError = E;
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         self.sink.poll_complete().map_err(|e| self.f.take().expect("cannot use MapErr after an error")(e))
