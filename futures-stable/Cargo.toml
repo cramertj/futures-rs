@@ -1,0 +1,26 @@
+[package]
+name = "futures-stable"
+version = "0.1.0"
+authors = ["boats <boats@mozilla.com>"]
+
+[features]
+nightly = ["anchor-experiment/std", "futures-core/std", "futures-executor/std", "std"]
+std = []
+default = ["std"]
+
+[dependencies.futures-core]
+path = "../futures-core"
+version = "0.2.0-alpha"
+default-features = false
+optional = true
+
+[dependencies.futures-executor]
+path = "../futures-executor"
+version = "0.2.0-alpha"
+default-features = false
+optional = true
+
+[dependencies.anchor-experiment]
+git = "https://github.com/withoutboats/anchor_experiment"
+default-features = false
+optional = true
