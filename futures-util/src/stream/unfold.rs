@@ -55,56 +55,71 @@ use futures_core::task;
 /// assert_eq!(result, Ok(vec![0, 2, 4]));
 /// # }
 /// ```
-pub fn unfold<T, F, Fut, It>(init: T, f: F) -> Unfold<T, F, Fut>
-    where F: FnMut(T) -> Fut,
-          Fut: Future<Output = Option<(It, T)>>,
+pub fn unfold<'any, F, State, It>(init: State, f: F) -> Unfold<'any, F, State, It>
+    where F: UnfoldFn<State, It> + 'any,
+          State: 'any,
 {
     Unfold {
         f: f,
-        state: Some(init),
+        state: init,
         fut: None,
     }
 }
 
+pub trait UnfoldFnLt<'a, State, It> {
+    type Future: Future<Output = Option<It>>;
+    fn apply(&mut self, state: &'a mut State) -> Self::Future;
+}
+
+pub trait UnfoldFn<State, It>: for<'a> UnfoldFnLt<'a, State, It> {}
+impl<State, It, T: for<'a> UnfoldFnLt<'a, State, It>> UnfoldFn<State, It> for T {}
+
 /// A stream which creates futures, polls them and return their result
 ///
 /// This stream is returned by the `futures::stream::unfold` method
-#[derive(Debug)]
+#[allow(missing_debug_implementations)]
 #[must_use = "streams do nothing unless polled"]
-pub struct Unfold<T, F, Fut> {
+pub struct Unfold<'any, F, State, It>
+    where F: UnfoldFn<State, It> + 'any,
+          State: 'any,
+{
     f: F,
-    state: Option<T>,
-    fut: Option<Fut>,
+    fut: Option<<F as UnfoldFnLt<'any, State, It>>::Future>,
+    // The state, which may be borrowed by the other fields, must be dropped last
+    state: State,
 }
 
-impl<T, F, Fut> Unfold<T, F, Fut> {
+// TODO: make `Unfold` *always* !Unpin-- where do we get that marker type?
+
+impl<'any, F, State, It> Unfold<'any, F, State, It>
+    where F: UnfoldFn<State, It> + 'any,
+          State: 'any,
+{
     unsafe_unpinned!(f -> F);
-    unsafe_unpinned!(state -> Option<T>);
-    unsafe_pinned!(fut -> Option<Fut>);
+    unsafe_pinned!(fut -> Option<<F as UnfoldFnLt<'any, State, It>>::Future>);
 }
 
-impl<T, F, Fut, It> Stream for Unfold<T, F, Fut>
-    where F: FnMut(T) -> Fut,
-          Fut: Future<Output = Option<(It, T)>>,
+unsafe fn transmute_lt<'input, 'output, T>(x: &'input mut T) -> &'output mut T {
+    ::std::mem::transmute(x)
+}
+
+impl<'any, F, State, It> Stream for Unfold<'any, F, State, It>
+    where F: UnfoldFn<State, It> + 'any,
+          State: 'any,
 {
     type Item = It;
 
     fn poll_next(mut self: PinMut<Self>, cx: &mut task::Context) -> Poll<Option<It>> {
-        loop {
-            if let Some(state) = self.state().take() {
-                let fut = (self.f())(state);
-                self.fut().assign(Some(fut));
-            }
-
-            let step = try_ready!(self.fut().as_pin_mut().unwrap().poll(cx));
-            self.fut().assign(None);
-
-            if let Some((item, next_state)) = step {
-                *self.state() = Some(next_state);
-                return Poll::Ready(Some(item))
-            } else {
-                return Poll::Ready(None)
-            }
+        if self.fut.is_none() {
+            let state_ref_mut: &'any mut State = {
+                unsafe { transmute_lt(&mut PinMut::get_mut(self.reborrow()).state) }
+            };
+            let fut = (self.f()).apply(state_ref_mut);
+            self.fut().assign(Some(fut));
         }
+
+        let next = try_ready!(self.fut().as_pin_mut().unwrap().poll(cx));
+        self.fut().assign(None);
+        Poll::Ready(next)
     }
 }
