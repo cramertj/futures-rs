@@ -11,10 +11,11 @@ pub(super) struct Task<Fut> {
     // The future
     pub(super) future: UnsafeCell<Option<Fut>>,
 
-    // Next pointer for linked list tracking all active tasks
+    // Next pointer for linked list
     pub(super) next_all: UnsafeCell<*const Task<Fut>>,
 
-    // Previous task in linked list tracking all active tasks
+    // Previous task in linked list.
+    // Only used when in the "active" list.
     pub(super) prev_all: UnsafeCell<*const Task<Fut>>,
 
     // Next pointer in ready to run queue
