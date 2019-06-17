@@ -7,6 +7,17 @@ use crate::task::{ArcWake, WakerRef, waker_ref};
 use super::ReadyToRunQueue;
 use super::abort::abort;
 
+// Not in the queue and not being polled
+pub(super) const QUESTATE_UNQUEUED: usize = 0;
+// In the queue
+pub(super) const QUESTATE_QUEUED: usize = 1;
+// Not in the queue but actively being polled
+pub(super) const QUESTATE_POLLING: usize = 2;
+// Actively being polled with a repoll requested
+pub(super) const QUESTATE_REPOLL: usize = 3;
+// Shouldn't be queued-- it's empty
+pub(super) const QUESTATE_DONT_QUEUE: usize = 4;
+
 pub(super) struct Task<Fut> {
     // The future
     pub(super) future: UnsafeCell<Option<Fut>>,
@@ -25,7 +36,8 @@ pub(super) struct Task<Fut> {
     pub(super) ready_to_run_queue: Weak<ReadyToRunQueue<Fut>>,
 
     // Whether or not this task is currently in the ready to run queue
-    pub(super) queued: AtomicBool,
+    // or being polled.
+    pub(super) questate: AtomicUsize,
 }
 
 // `Task` can be sent across threads safely because it ensures that
@@ -55,10 +67,19 @@ impl<Fut> ArcWake for Task<Fut> {
         // implementation guarantees that if we set the `queued` flag that
         // there's a reference count held by the main `FuturesUnordered` queue
         // still.
-        let prev = arc_self.queued.swap(true, SeqCst);
-        if !prev {
-            inner.enqueue(&**arc_self);
-            inner.waker.wake();
+        let mut prev = QUESTATE_UNQUEUED;
+        loop {
+            let next = match prev {
+                QUESTATE_UNQUEUED => QUESTATE_QUEUED,
+                QUESTATE_QUEUED | QUESTATE_REPOLL | QUESTATE_DONT_QUEUE => return,
+                QUESTATE_POLLING => QUESTATE_REPOLL,
+                _ => unreachable!(),
+            };
+            prev = arc_self.questate.compare_and_swap(prev, next, SeqCst);
+            if next == QUESTATE_QUEUED {
+                inner.enqueue(&**arc_self);
+                inner.waker.wake();
+            }
         }
     }
 }

@@ -24,7 +24,13 @@ mod iter;
 pub use self::iter::{IterMut, IterPinMut};
 
 mod task;
-use self::task::Task;
+use self::task::{
+    Task,
+    QUESTATE_UNQUEUED,
+    QUESTATE_QUEUED,
+    QUESTATE_POLLING,
+    QUESTATE_REPOLL,
+};
 
 mod ready_to_run_queue;
 use self::ready_to_run_queue::{ReadyToRunQueue, Dequeue};
@@ -135,7 +141,7 @@ impl<Fut: Future> FuturesUnordered<Fut> {
             next_all: UnsafeCell::new(ptr::null()),
             prev_all: UnsafeCell::new(ptr::null()),
             next_ready_to_run: AtomicPtr::new(ptr::null_mut()),
-            queued: AtomicBool::new(true),
+            queued: AtomicBool::new(QUESTATE_QUEUED),
             ready_to_run_queue: Weak::new(),
         });
         let stub_ptr = &*stub as *const Task<Fut>;
@@ -188,23 +194,21 @@ impl<Fut> FuturesUnordered<Fut> {
     /// ensure that [`FuturesUnordered::poll_next`](Stream::poll_next) is called
     /// in order to receive wake-up notifications for the given future.
     pub fn push(&mut self, future: Fut) {
-        let already_queued;
         let task = match self.unlink_empty() {
             Some(task) => {
-                already_queued = task.queued.swap(true, SeqCst);
+                task.questate.store(QUESTATE_QUEUED, SeqCst);
                 unsafe {
                     *task.future.get() = Some(future);
                 }
                 task
             },
             None => {
-                already_queued = false;
                 Arc::new(Task {
                     future: UnsafeCell::new(Some(future)),
                     next_all: UnsafeCell::new(ptr::null_mut()),
                     prev_all: UnsafeCell::new(ptr::null_mut()),
                     next_ready_to_run: AtomicPtr::new(ptr::null_mut()),
-                    queued: AtomicBool::new(true),
+                    questate: AtomicUsize::new(QUESTATE_QUEUED),
                     ready_to_run_queue: Arc::downgrade(&self.ready_to_run_queue),
                 })
             },
@@ -224,9 +228,7 @@ impl<Fut> FuturesUnordered<Fut> {
         // We'll need to get the future "into the system" to start tracking it,
         // e.g. getting its wake-up notifications going to us tracking which
         // futures are ready. To do that we enqueue it for polling here.
-        if !already_queued {
-            self.ready_to_run_queue.enqueue(ptr);
-        }
+        self.ready_to_run_queue.enqueue(ptr);
     }
 
     /// Returns an iterator that allows modifying each future in the set.
@@ -246,24 +248,15 @@ impl<Fut> FuturesUnordered<Fut> {
     /// Releases the task. It destorys the future inside.
     ///
     /// If `save`, the `Arc<Task>` will be added to the head_empty list.
-    /// Otherwise, either drops the `Arc<Task>` or transfers ownership to
-    /// the ready to run queue.
-    /// The task this method is called on must have been unlinked before.
+    /// Otherwise, either drops the `Arc<Task>`.
+    /// The task this method is called on must have been unlinked before,
+    /// and must not be on the ready-to-run queue.
     fn release_task(&mut self, task: Arc<Task<Fut>>, save: bool) {
         // `release_task` must only be called on unlinked tasks
         unsafe {
             debug_assert!((*task.next_all.get()).is_null());
             debug_assert!((*task.prev_all.get()).is_null());
         }
-
-        // The future is done, try to reset the queued flag. This will prevent
-        // `wake` from doing any work in the future.
-        let prev = if !save {
-            task.queued.swap(true, SeqCst)
-        } else {
-            // dummy value
-            false
-        };
 
         // Drop the future, even if it hasn't finished yet. This is safe
         // because we're dropping the future on the thread that owns
@@ -277,21 +270,6 @@ impl<Fut> FuturesUnordered<Fut> {
 
         if save {
             self.link_empty(task);
-        } else {
-            // If the queued flag was previously set, then it means that this task
-            // is still in our internal ready to run queue. We then transfer
-            // ownership of our reference count to the ready to run queue, and it'll
-            // come along and free it later, noticing that the future is `None`.
-            //
-            // If, however, the queued flag was *not* set then we're safe to
-            // release our reference count on the task. The queued flag was set
-            // above so all future `enqueue` operations will not actually
-            // enqueue the task, so our task will never see the ready to run queue
-            // again. The task itself will be deallocated once all reference counts
-            // have been dropped elsewhere by the various wakers that contain it.
-            if prev {
-                mem::forget(task);
-            }
         }
     }
 
@@ -372,29 +350,7 @@ impl<Fut: Future> Stream for FuturesUnordered<Fut> {
             //   contains the future
             let future = match unsafe { &mut *(*task).future.get() } {
                 Some(future) => future,
-
-                // If the future has already gone away then we're just
-                // cleaning out this task. See the comment in
-                // `release_task` for more information, but we're basically
-                // just taking ownership of our reference count here.
-                None => {
-                    // This case only happens when `release_task` was called
-                    // for this task before and couldn't drop the task
-                    // because it was already enqueued in the ready to run
-                    // queue.
-
-                    // Safety: `task` is a valid pointer
-                    // THIS IS WRONG NOW
-                    let task = unsafe { Arc::from_raw(task) };
-
-                    // Double check that the call to `release_task` really
-                    // happened. Calling it required the task to be unlinked.
-                    unsafe {
-                        debug_assert!((*task.next_all.get()).is_null());
-                        debug_assert!((*task.prev_all.get()).is_null());
-                    }
-                    continue
-                }
+                None => unreachable!("queued an empty task on ready_to_run"),
             };
 
             // Safety: `task` is a valid pointer
@@ -403,8 +359,8 @@ impl<Fut: Future> Stream for FuturesUnordered<Fut> {
             // Unset queued flag: This must be done before polling to ensure
             // that the future's task gets rescheduled if it sends a wake-up
             // notification **during** the call to `poll`.
-            let prev = task.queued.swap(false, SeqCst);
-            assert!(prev);
+            let prev = task.queued.swap(QUESTATE_POLLING, SeqCst);
+            assert!(prev == QUESTATE_QUEUED);
 
             // We're going to need to be very careful if the `poll`
             // method below panics. We need to (a) not leak memory and
@@ -449,15 +405,18 @@ impl<Fut: Future> Stream for FuturesUnordered<Fut> {
             // These structs will basically just use `Fut` to size
             // the internal allocation, appropriately accessing fields and
             // deallocating the task if need be.
-            let res = {
+            {
                 let waker = Task::waker_ref(bomb.task.as_ref().unwrap());
                 let mut cx = Context::from_waker(&waker);
-
                 // Safety: We won't move the future ever again
                 let future = unsafe { Pin::new_unchecked(future) };
 
-                future.poll(&mut cx)
-            };
+            loop {
+
+                loop {
+                    future.poll(&mut cx)
+                }
+            }
 
             match res {
                 Poll::Pending => {

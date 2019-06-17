@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering::{Relaxed, Acquire, Release, AcqRel};
 use alloc::sync::Arc;
 
 use super::abort::abort;
-use super::task::Task;
+use super::task::{Task, QUESTATE_QUEUED};
 
 pub(super) enum Dequeue<Fut> {
     Data(*const Task<Fut>),
@@ -30,7 +30,7 @@ impl<Fut> ReadyToRunQueue<Fut> {
     /// The enqueue function from the 1024cores intrusive MPSC queue algorithm.
     pub(super) fn enqueue(&self, task: *const Task<Fut>) {
         unsafe {
-            debug_assert!((*task).queued.load(Relaxed));
+            debug_assert!((*task).questate.load(Relaxed) == QUESTATE_QUEUED);
 
             // This action does not require any coordination
             (*task).next_ready_to_run.store(ptr::null_mut(), Relaxed);
